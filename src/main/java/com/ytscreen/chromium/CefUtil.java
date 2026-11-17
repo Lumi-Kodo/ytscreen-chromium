@@ -75,6 +75,10 @@ final class CefUtil {
         List<String> switches = new ArrayList<>();
         // videos must start without a click
         switches.add("--autoplay-policy=no-user-gesture-required");
+        switches.add("--off-screen-rendering-enabled");
+        // Chromium 152+ asks Linux users to accept a EULA on the first run; there is no window to accept it in, so
+        // the browser process would exit with code 28 (EULA refused)
+        switches.add("--no-first-run");
         if (platform.isLinux()) {
             // Chromium draws through ANGLE on GL and runs on X11 (XWayland on Wayland sessions)
             switches.add("--use-angle=gl");
