@@ -1,0 +1,95 @@
+name: Build mod
+
+# Builds the mod jar (with the checksums of the published natives built in), runs the Chromium self-test in a real
+# Minecraft client on a virtual display and publishes the jar as a GitHub release.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build Chromium natives"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-mod
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Natives release present?
+        id: natives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="natives-$(git -C java-cef rev-parse HEAD)"
+          if gh release view "$TAG" --json assets -q '.assets[].name' | grep -q 'windows_amd64.tar.gz.sha256'; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Release $TAG with the natives does not exist yet; the mod is built once the natives workflow has published it."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile only (natives not published yet)
+        if: steps.natives.outputs.ok != 'true'
+        run: |
+          chmod +x ./gradlew
+          ./gradlew compileJava -PskipNativeChecksums --stacktrace
+
+      - name: Build
+        if: steps.natives.outputs.ok == 'true'
+        run: |
+          chmod +x ./gradlew
+          ./gradlew build --stacktrace
+
+      - name: Chromium self-test in a real client
+        if: steps.natives.outputs.ok == 'true'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1-mesa-dri libnss3 libatk-bridge2.0-0t64 libgtk-3-0t64 libgbm1 \
+            libxcomposite1 libxdamage1 libxrandr2 libasound2t64 libxkbcommon0 libcups2t64 libpango-1.0-0 libxshmfence1
+          mkdir -p run-selftest
+          timeout 900 xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew runSelftest --stacktrace || true
+          cat run-selftest/chromium-selftest.txt || echo "no result file"
+          grep -q "RESULT: PASS" run-selftest/chromium-selftest.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.natives.outputs.ok == 'true'
+        with:
+          name: ytscreen-chromium
+          path: |
+            build/libs/*.jar
+            run-selftest/chromium-selftest.*
+            run-selftest/logs/latest.log
+            run-selftest/ytscreen-chromium/chromium.log
+
+      - name: Publish the jar
+        if: steps.natives.outputs.ok == 'true' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep '^mod_version=' gradle.properties | cut -d= -f2)
+          TAG="v$VERSION"
+          JAR=$(ls build/libs/*.jar | grep -v sources | head -1)
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "YouTube Screen Chromium $VERSION" --target "$GITHUB_SHA" \
+              --notes "Chromium (CEF) for Minecraft 1.21.1 NeoForge, needed by YouTube Screen. Put the jar into the mods folder; Chromium itself is downloaded on the first start."
+          fi
+          gh release upload "$TAG" "$JAR" --clobber

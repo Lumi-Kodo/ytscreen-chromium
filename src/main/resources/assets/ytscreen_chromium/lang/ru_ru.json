@@ -1,0 +1,7 @@
+{
+  "ytscreen_chromium.status.downloading": "Загрузка Chromium для YouTube Screen: %s%%",
+  "ytscreen_chromium.status.extracting": "Распаковка Chromium: %s%%",
+  "ytscreen_chromium.status.verifying": "Проверка файлов Chromium: %s%%",
+  "ytscreen_chromium.status.failed": "Не удалось установить Chromium: %s (подробности в логе)",
+  "ytscreen_chromium.status.start_failed": "Не удалось запустить Chromium (подробности в логе)"
+}

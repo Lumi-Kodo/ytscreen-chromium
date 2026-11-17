@@ -1,0 +1,129 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = "${mod_id}-neoforge-${minecraft_version}"
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    runs {
+        client {
+            client()
+            gameDirectory = project.file('run')
+        }
+        // CI check: installs the natives, starts Chromium, renders a test page and exits
+        selftest {
+            client()
+            systemProperty 'ytscreen.chromium.selftest', 'true'
+            gameDirectory = project.file('run-selftest')
+        }
+        configureEach {
+            logLevel = org.slf4j.event.Level.INFO
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+// java-cef (Java part) is compiled into this mod; its natives are downloaded at runtime.
+sourceSets.main.java {
+    srcDir 'java-cef/java'
+    exclude 'tests/**'
+}
+
+// ---------------------------------------------------------------- java-cef commit + pinned native checksums
+
+def jcefCommit = providers.exec {
+    commandLine 'git', '-C', 'java-cef', 'rev-parse', 'HEAD'
+}.standardOutput.asText.map { it.trim() }
+
+def platforms = ['linux_amd64', 'linux_arm64', 'windows_amd64', 'windows_arm64', 'macos_amd64', 'macos_arm64']
+
+/**
+ * Writes jcef.commit and natives.sha256 (platform=sha256 of the natives archive) into the jar. The checksums are
+ * taken from the release built by the natives workflow; the mod only accepts archives that match them.
+ * -PskipNativeChecksums builds without them (development only: the mod then refuses to download).
+ */
+def generateJcefInfo = tasks.register('generateJcefInfo') {
+    def outDir = layout.buildDirectory.dir('generated/jcef')
+    def repo = project.natives_repo
+    def skip = project.hasProperty('skipNativeChecksums')
+    inputs.property('commit', jcefCommit)
+    inputs.property('repo', repo)
+    inputs.property('skip', skip)
+    outputs.dir(outDir)
+    doLast {
+        def dir = outDir.get().asFile
+        dir.mkdirs()
+        def commit = jcefCommit.get()
+        new File(dir, 'jcef.commit').text = commit + '\n'
+        def lines = []
+        if (!skip) {
+            platforms.each { p ->
+                def url = "https://github.com/${repo}/releases/download/natives-${commit}/${p}.tar.gz.sha256"
+                def text = new URL(url).getText('UTF-8').trim().split(/\s+/)[0]
+                if (!(text ==~ /[0-9a-f]{64}/)) throw new GradleException("Bad checksum from ${url}: ${text}")
+                lines << "${p}=${text}"
+            }
+        }
+        new File(dir, 'natives.sha256').text = lines.join('\n') + '\n'
+    }
+}
+sourceSets.main.resources.srcDir generateJcefInfo
+
+// ---------------------------------------------------------------- mod metadata
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+jar {
+    from('LICENSE') { rename { 'LICENSE_ytscreen_chromium' } }
+    manifest {
+        attributes([
+                "Specification-Title"   : mod_id,
+                "Specification-Version" : mod_version,
+                "Implementation-Title"  : mod_name,
+                "Implementation-Version": mod_version,
+        ])
+    }
+}

@@ -1,0 +1,149 @@
+/*
+ *     YouTube Screen Chromium - a fork of MCEF (Minecraft Chromium Embedded Framework)
+ *     Copyright (C) 2023 CinemaMod Group
+ *     Copyright (C) 2025 CCBlueX
+ *     Copyright (C) 2026 Lumi-Kodo
+ *
+ *     This library is free software; you can redistribute it and/or
+ *     modify it under the terms of the GNU Lesser General Public
+ *     License as published by the Free Software Foundation; either
+ *     version 2.1 of the License, or (at your option) any later version.
+ *
+ *     This library is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ *     Lesser General Public License for more details.
+ *
+ *     You should have received a copy of the GNU Lesser General Public
+ *     License along with this library; if not, write to the Free Software
+ *     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301
+ *     USA
+ */
+
+package com.ytscreen.chromium;
+
+import com.mojang.blaze3d.systems.RenderSystem;
+import net.minecraft.client.Minecraft;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
+
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Automated check used by CI (-Dytscreen.chromium.selftest=true): installs the natives, starts Chromium, renders a
+ * page with JavaScript, checks the console bridge and the texture, writes chromium-selftest.txt/png and exits.
+ */
+final class SelfTest {
+    private static final long TIMEOUT_MS = 300_000;
+    private static final String PAGE = "data:text/html;charset=utf-8,"
+            + java.net.URLEncoder.encode("<html><body style='margin:0;background:#c00'><div id=d style='width:50%;height:100%;background:#0c0'></div>"
+            + "<script>console.log('SELFTEST:' + navigator.userAgent);</script></body></html>", StandardCharsets.UTF_8).replace("+", "%20");
+    private static final long started = System.currentTimeMillis();
+    private static final List<String> log = new ArrayList<>();
+    private static MCEFBrowser browser;
+    private static long browserAt;
+    private static volatile String consoleLine;
+    private static boolean done;
+
+    private SelfTest() {
+    }
+
+    static boolean enabled() {
+        return Boolean.getBoolean("ytscreen.chromium.selftest");
+    }
+
+    private static void note(String s) {
+        String line = String.format("[%6.1fs] %s", (System.currentTimeMillis() - started) / 1000.0, s);
+        log.add(line);
+        MCEF.getLogger().info("[selftest] {}", line);
+    }
+
+    static void onTick(ClientTickEvent.Post e) {
+        if (done) return;
+        long now = System.currentTimeMillis();
+        if (now - started > TIMEOUT_MS) {
+            finish("FAIL: timeout, natives state " + Natives.state() + " " + Natives.error());
+            return;
+        }
+        if (Natives.state() == Natives.State.FAILED || MCEF.hasFailed()) {
+            finish("FAIL: " + (Natives.error().isEmpty() ? "Chromium did not start" : Natives.error()));
+            return;
+        }
+        if (!MCEF.isInitialized()) return;
+        if (browser == null) {
+            note("Chromium started, java-cef " + MCEF.getJavaCefCommit());
+            MCEF.getClient().addDisplayHandler(new org.cef.handler.CefDisplayHandlerAdapter() {
+                @Override
+                public boolean onConsoleMessage(org.cef.browser.CefBrowser b, org.cef.CefSettings.LogSeverity level, String message, String source, int line) {
+                    if (b == browser && message.startsWith("SELFTEST:")) consoleLine = message.substring(9);
+                    return false;
+                }
+            });
+            browser = MCEF.createBrowser(PAGE, false);
+            browser.resize(640, 360);
+            browserAt = now;
+            return;
+        }
+        if (now - browserAt < 4000 || consoleLine == null || browser.getRenderer().getTextureID() == 0) {
+            if (now - browserAt > 60_000) finish("FAIL: page not rendered (console=" + consoleLine + ", texture=" + browser.getRenderer().getTextureID() + ")");
+            return;
+        }
+        note("user agent: " + consoleLine);
+        // left half green, right half red
+        int tex = browser.getRenderer().getTextureID();
+        int w = 640, h = 360;
+        ByteBuffer buf = BufferUtils.createByteBuffer(w * h * 4);
+        RenderSystem.bindTexture(tex);
+        GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
+        int[] tw = new int[1], th = new int[1];
+        GL11.glGetTexLevelParameteriv(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH, tw);
+        GL11.glGetTexLevelParameteriv(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT, th);
+        if (tw[0] != w || th[0] != h) {
+            RenderSystem.bindTexture(0);
+            finish("FAIL: texture size " + tw[0] + "x" + th[0]);
+            return;
+        }
+        GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, buf);
+        RenderSystem.bindTexture(0);
+        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int i = (y * w + x) * 4;
+                img.setRGB(x, y, ((buf.get(i + 2) & 0xFF) << 16) | ((buf.get(i + 1) & 0xFF) << 8) | (buf.get(i) & 0xFF));
+            }
+        }
+        try {
+            ImageIO.write(img, "png", new File(Minecraft.getInstance().gameDirectory, "chromium-selftest.png"));
+        } catch (Exception ex) {
+            note("could not save png: " + ex);
+        }
+        int left = img.getRGB(w / 4, h / 2) & 0xFFFFFF, right = img.getRGB(3 * w / 4, h / 2) & 0xFFFFFF;
+        note(String.format("pixels: left=%06x right=%06x", left, right));
+        boolean greenLeft = ((left >> 8) & 0xFF) > 150 && ((left >> 16) & 0xFF) < 80;
+        boolean redRight = ((right >> 16) & 0xFF) > 150 && ((right >> 8) & 0xFF) < 80;
+        String chrome = consoleLine.replaceAll(".*Chrome/([0-9.]+).*", "$1");
+        note("Chromium version: " + chrome);
+        finish(greenLeft && redRight ? "PASS" : "FAIL: wrong picture");
+    }
+
+    private static void finish(String result) {
+        done = true;
+        note("RESULT: " + result);
+        try {
+            Files.writeString(new File(Minecraft.getInstance().gameDirectory, "chromium-selftest.txt").toPath(), String.join("\n", log) + "\n");
+        } catch (Exception ex) {
+            MCEF.getLogger().error("could not write the self-test result", ex);
+        }
+        if (browser != null) browser.close();
+        Minecraft.getInstance().stop();
+    }
+}
