@@ -29,6 +29,7 @@ neoForge {
         selftest {
             client()
             systemProperty 'ytscreen.chromium.selftest', 'true'
+            systemProperty 'ytscreen.chromium.verbose', 'true'
             gameDirectory = project.file('run-selftest')
         }
         configureEach {

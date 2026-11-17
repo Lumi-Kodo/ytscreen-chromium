@@ -83,6 +83,11 @@ final class CefUtil {
             // heap passes 2 GiB, and Chromium then kills the process (chromiumembedded/cef#3963)
             switches.add("--test-memory-log-delay-in-minutes=525600");
         }
+        boolean verbose = Boolean.getBoolean("ytscreen.chromium.verbose");
+        if (verbose) {
+            switches.add("--enable-logging=stderr");
+            switches.add("--v=1");
+        }
         for (String s : settings.getExtraSwitches()) {
             String name = s.contains("=") ? s.substring(0, s.indexOf('=')) : s;
             switches.removeIf(x -> x.equals(name) || x.startsWith(name + "="));
@@ -98,10 +103,18 @@ final class CefUtil {
 
         CefSettings cefSettings = new CefSettings();
         cefSettings.windowless_rendering_enabled = true;
+        // CEF 120+: one process-singleton lock per root_cache_path; the profile (cookies, sign-ins) lives inside it
+        Path root = cacheDir.toAbsolutePath().getParent();
+        try {
+            Files.createDirectories(cacheDir);
+        } catch (IOException e) {
+            MCEF.getLogger().warn("Could not create {}", cacheDir, e);
+        }
+        cefSettings.root_cache_path = root.toString();
         if (settings.isUsingCache()) cefSettings.cache_path = cacheDir.toAbsolutePath().toString();
         cefSettings.background_color = cefSettings.new ColorType(0, 255, 255, 255);
         cefSettings.log_file = cacheDir.getParent().resolve("chromium.log").toAbsolutePath().toString();
-        cefSettings.log_severity = CefSettings.LogSeverity.LOGSEVERITY_WARNING;
+        cefSettings.log_severity = verbose ? CefSettings.LogSeverity.LOGSEVERITY_VERBOSE : CefSettings.LogSeverity.LOGSEVERITY_WARNING;
         if (!settings.getUserAgent().isEmpty()) {
             cefSettings.user_agent = settings.getUserAgent();
         } else {

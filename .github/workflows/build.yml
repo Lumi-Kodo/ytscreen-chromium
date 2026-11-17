@@ -68,7 +68,7 @@ jobs:
             libegl1 libegl-mesa0 libgles2
           mkdir -p run-selftest
           timeout 900 xvfb-run -a -s "-screen 0 1280x720x24" ./gradlew runSelftest --stacktrace || true
-          echo "---- chromium.log"; tail -n 80 run-selftest/ytscreen-chromium/chromium.log || true
+          echo "---- chromium.log"; grep -v "VERBOSE[2-9]" run-selftest/ytscreen-chromium/chromium.log | tail -n 150 || true
           echo "---- self-test"; cat run-selftest/chromium-selftest.txt || echo "no result file"
           grep -q "RESULT: PASS" run-selftest/chromium-selftest.txt
 
