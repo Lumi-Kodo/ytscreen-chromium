@@ -325,8 +325,10 @@ public class MCEFBrowser extends CefBrowserOsr {
             }
         }
 
-        CefKeyEvent e = new CefKeyEvent(CefKeyEvent.KEY_PRESS, keyCode, (char) keyCode, modifiers);
-        e.scancode = scanCode;
+        // the natives identify keys by SDL scancode/keycode (see SdlInput); scanCode from GLFW is not used
+        int sdlKey = SdlInput.keycode(keyCode);
+        CefKeyEvent e = new CefKeyEvent(CefKeyEvent.KEY_PRESS, sdlKey, SdlInput.keyChar(sdlKey), SdlInput.modifiers(modifiers));
+        e.scancode = SdlInput.scancode(keyCode);
         sendKeyEvent(e);
     }
 
@@ -343,8 +345,9 @@ public class MCEFBrowser extends CefBrowserOsr {
             }
         }
 
-        CefKeyEvent e = new CefKeyEvent(CefKeyEvent.KEY_RELEASE, keyCode, (char) keyCode, modifiers);
-        e.scancode = scanCode;
+        int sdlKey = SdlInput.keycode(keyCode);
+        CefKeyEvent e = new CefKeyEvent(CefKeyEvent.KEY_RELEASE, sdlKey, SdlInput.keyChar(sdlKey), SdlInput.modifiers(modifiers));
+        e.scancode = SdlInput.scancode(keyCode);
         sendKeyEvent(e);
     }
 
@@ -361,7 +364,7 @@ public class MCEFBrowser extends CefBrowserOsr {
             }
         }
 
-        CefKeyEvent e = new CefKeyEvent(CefKeyEvent.KEY_TYPE, c, c, modifiers);
+        CefKeyEvent e = new CefKeyEvent(CefKeyEvent.KEY_TYPE, c, c, SdlInput.modifiers(modifiers));
         sendKeyEvent(e);
     }
 
@@ -376,44 +379,34 @@ public class MCEFBrowser extends CefBrowserOsr {
             this.dragTargetDragOver(new Point(mouseX, mouseY), 0, dragContext.getMask());
     }
 
-    // TODO: it may be necessary to add modifiers here
+    private long lastClickTime;
+    private int clicks = 1;
+
+    /** @param button GLFW mouse button (0 left, 1 right, 2 middle) */
     public void sendMousePress(int mouseX, int mouseY, int button) {
         mouseX = scaleX(mouseX);
         mouseY = scaleY(mouseY);
-
-        // for some reason, middle and right are swapped in MC
-        if (button == 1) button = 2;
-        else if (button == 2) button = 1;
-
-        if (button == 0) btnMask |= CefMouseEvent.BUTTON1_MASK;
-        else if (button == 1) btnMask |= CefMouseEvent.BUTTON2_MASK;
-        else if (button == 2) btnMask |= CefMouseEvent.BUTTON3_MASK;
-
-        CefMouseEvent e = new CefMouseEvent(GLFW_PRESS, mouseX, mouseY, 1, button, btnMask);
-        sendMouseEvent(e);
+        int sdlButton = SdlInput.button(button);
+        if (sdlButton < 0) return;
+        btnMask |= SdlInput.buttonMask(button);
+        long now = System.currentTimeMillis();
+        clicks = now - lastClickTime < 500 ? 2 : 1; // double click (select a word, ...)
+        lastClickTime = now;
+        sendMouseEvent(new CefMouseEvent(CefMouseEvent.MOUSE_PRESSED, mouseX, mouseY, clicks, sdlButton, btnMask));
     }
 
-    // TODO: it may be necessary to add modifiers here
+    /** @param button GLFW mouse button (0 left, 1 right, 2 middle) */
     public void sendMouseRelease(int mouseX, int mouseY, int button) {
         mouseX = scaleX(mouseX);
         mouseY = scaleY(mouseY);
-
-        // For some reason, middle and right are swapped in MC
-        if (button == 1) button = 2;
-        else if (button == 2) button = 1;
-
-        if (button == 0 && (btnMask & CefMouseEvent.BUTTON1_MASK) != 0) btnMask ^= CefMouseEvent.BUTTON1_MASK;
-        else if (button == 1 && (btnMask & CefMouseEvent.BUTTON2_MASK) != 0) btnMask ^= CefMouseEvent.BUTTON2_MASK;
-        else if (button == 2 && (btnMask & CefMouseEvent.BUTTON3_MASK) != 0) btnMask ^= CefMouseEvent.BUTTON3_MASK;
-
-        CefMouseEvent e = new CefMouseEvent(GLFW_RELEASE, mouseX, mouseY, 1, button, btnMask);
-        sendMouseEvent(e);
+        int sdlButton = SdlInput.button(button);
+        if (sdlButton < 0) return;
+        btnMask &= ~SdlInput.buttonMask(button);
+        sendMouseEvent(new CefMouseEvent(CefMouseEvent.MOUSE_RELEASED, mouseX, mouseY, clicks, sdlButton, btnMask));
 
         // drag&drop
-        if (dragContext.isDragging()) {
-            if (button == 0) {
-                finishDragging(mouseX, mouseY);
-            }
+        if (dragContext.isDragging() && button == 0) {
+            finishDragging(mouseX, mouseY);
         }
     }
 
@@ -444,7 +437,7 @@ public class MCEFBrowser extends CefBrowserOsr {
             amount = amount * 3;
         }
 
-        CefMouseWheelEvent e = new CefMouseWheelEvent(CefMouseWheelEvent.WHEEL_UNIT_SCROLL, mouseX, mouseY, amount, modifiers);
+        CefMouseWheelEvent e = new CefMouseWheelEvent(CefMouseWheelEvent.WHEEL_UNIT_SCROLL, mouseX, mouseY, amount, SdlInput.modifiers(modifiers));
         sendMouseWheelEvent(e);
     }
 

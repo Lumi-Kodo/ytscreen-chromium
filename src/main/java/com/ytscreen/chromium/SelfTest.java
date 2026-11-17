@@ -45,14 +45,19 @@ import java.util.List;
 final class SelfTest {
     private static final long TIMEOUT_MS = 300_000;
     private static final String PAGE = "data:text/html;charset=utf-8,"
-            + java.net.URLEncoder.encode("<html><body style='margin:0;background:#c00'><div id=d style='width:50%;height:100%;background:#0c0'></div>"
+            + java.net.URLEncoder.encode("<html><body style='margin:0;background:#c00'>"
+            + "<div id=d style='position:absolute;left:0;top:0;width:50%;height:100%;background:#0c0' onclick=\"console.log('SELFTEST-CLICK')\"></div>"
+            + "<input id=i style='position:absolute;left:60%;top:10px;width:200px;height:30px' oninput=\"console.log('SELFTEST-INPUT:'+this.value)\">"
             + "<script>console.log('SELFTEST:' + navigator.userAgent);</script></body></html>", StandardCharsets.UTF_8).replace("+", "%20");
     private static final long started = System.currentTimeMillis();
     private static final List<String> log = new ArrayList<>();
     private static MCEFBrowser browser;
     private static long browserAt;
     private static volatile String consoleLine;
+    private static final java.util.Set<String> console = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static boolean done;
+    private static int phase;
+    private static long phaseAt;
 
     private SelfTest() {
     }
@@ -85,12 +90,43 @@ final class SelfTest {
                 @Override
                 public boolean onConsoleMessage(org.cef.browser.CefBrowser b, org.cef.CefSettings.LogSeverity level, String message, String source, int line) {
                     if (b == browser && message.startsWith("SELFTEST:")) consoleLine = message.substring(9);
+                    else if (b == browser && message.startsWith("SELFTEST-")) console.add(message);
                     return false;
                 }
             });
             browser = MCEF.createBrowser(PAGE, false);
             browser.resize(640, 360);
             browserAt = now;
+            return;
+        }
+        if (phase == 1) {
+            // input: a click on the green area must reach the page's onclick handler
+            if (console.contains("SELFTEST-CLICK")) {
+                note("mouse click reached the page");
+                browser.sendMousePress(480, 25, 0);
+                browser.sendMouseRelease(480, 25, 0);
+                browser.setFocus(true);
+                phase = 2;
+                phaseAt = now;
+            } else if (now - phaseAt > 8000) finish("FAIL: mouse clicks do not reach the page");
+            return;
+        }
+        if (phase == 2) {
+            if (now - phaseAt < 800) return;
+            if (now - phaseAt < 1000) {
+                for (char ch : new char[]{'a', 'b'}) {
+                    int key = org.lwjgl.glfw.GLFW.GLFW_KEY_A + (ch - 'a');
+                    browser.sendKeyPress(key, 0, 0);
+                    browser.sendKeyTyped(ch, 0);
+                    browser.sendKeyRelease(key, 0, 0);
+                }
+                phaseAt -= 200; // type once
+                return;
+            }
+            if (console.contains("SELFTEST-INPUT:ab")) {
+                note("keyboard input reached the page");
+                finish("PASS");
+            } else if (now - phaseAt > 8000) finish("FAIL: typed text does not reach the page " + console);
             return;
         }
         if (now - browserAt < 4000 || consoleLine == null || browser.getRenderer().getTextureID() == 0) {
@@ -130,9 +166,16 @@ final class SelfTest {
         note(String.format("pixels: left=%06x right=%06x", left, right));
         boolean greenLeft = ((left >> 8) & 0xFF) > 150 && ((left >> 16) & 0xFF) < 80;
         boolean redRight = ((right >> 16) & 0xFF) > 150 && ((right >> 8) & 0xFF) < 80;
-        String chrome = consoleLine.replaceAll(".*Chrome/([0-9.]+).*", "$1");
-        note("Chromium version: " + chrome);
-        finish(greenLeft && redRight ? "PASS" : "FAIL: wrong picture");
+        if (!(greenLeft && redRight)) {
+            finish("FAIL: wrong picture");
+            return;
+        }
+        note("picture ok");
+        browser.sendMouseMove(160, 180);
+        browser.sendMousePress(160, 180, 0);
+        browser.sendMouseRelease(160, 180, 0);
+        phase = 1;
+        phaseAt = now;
     }
 
     private static void finish(String result) {
