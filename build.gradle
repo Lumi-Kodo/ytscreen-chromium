@@ -79,7 +79,15 @@ def generateJcefInfo = tasks.register('generateJcefInfo') {
         if (!skip) {
             platforms.each { p ->
                 def url = "https://github.com/${repo}/releases/download/natives-${commit}/${p}.tar.gz.sha256"
-                def text = new URL(url).getText('UTF-8').trim().split(/\s+/)[0]
+                def text
+                try {
+                    text = new URL(url).getText('UTF-8').trim().split(/\s+/)[0]
+                } catch (FileNotFoundException ignored) {
+                    // a platform whose natives are not published yet: the mod reports it as unsupported
+                    if (p in ['windows_amd64', 'linux_amd64']) throw new GradleException("Natives for ${p} are not published: ${url}")
+                    logger.warn("Natives for ${p} are not published yet; this build will not support ${p}")
+                    return
+                }
                 if (!(text ==~ /[0-9a-f]{64}/)) throw new GradleException("Bad checksum from ${url}: ${text}")
                 lines << "${p}=${text}"
             }

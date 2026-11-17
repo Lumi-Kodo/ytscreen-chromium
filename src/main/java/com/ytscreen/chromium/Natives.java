@@ -154,7 +154,7 @@ public final class Natives {
             if (sumText != null) sums.load(new java.io.StringReader(sumText));
             String expected = sums.getProperty(name, "").trim();
             if (!expected.matches("[0-9a-f]{64}")) {
-                fail("no checksum for " + name + " in this build of the mod", null);
+                fail("this build of the mod has no Chromium for " + name + " yet, please update the mod", null);
                 return;
             }
 
