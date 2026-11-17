@@ -30,8 +30,15 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # java-cef's version script needs a real clone with history (a submodule's .git is only a file)
+      - name: Get java-cef at the pinned commit
+        shell: bash
+        run: |
+          SHA=$(git ls-tree HEAD java-cef | awk '{print $3}')
+          rm -rf java-cef
+          git clone -q --filter=blob:none https://github.com/CCBlueX/java-cef java-cef
+          git -C java-cef checkout -q "$SHA"
+          git -C java-cef log -1 --format="java-cef %H %s"
       - name: Build
         working-directory: java-cef
         run: |
@@ -66,8 +73,15 @@ jobs:
             msvc-arch: arm64
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # java-cef's version script needs a real clone with history (a submodule's .git is only a file)
+      - name: Get java-cef at the pinned commit
+        shell: bash
+        run: |
+          SHA=$(git ls-tree HEAD java-cef | awk '{print $3}')
+          rm -rf java-cef
+          git clone -q --filter=blob:none https://github.com/CCBlueX/java-cef java-cef
+          git -C java-cef checkout -q "$SHA"
+          git -C java-cef log -1 --format="java-cef %H %s"
       # the gsutil that fetches clang-format does not run on Python 3.13
       - uses: actions/setup-python@v5
         with:
@@ -108,8 +122,15 @@ jobs:
             runner: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # java-cef's version script needs a real clone with history (a submodule's .git is only a file)
+      - name: Get java-cef at the pinned commit
+        shell: bash
+        run: |
+          SHA=$(git ls-tree HEAD java-cef | awk '{print $3}')
+          rm -rf java-cef
+          git clone -q --filter=blob:none https://github.com/CCBlueX/java-cef java-cef
+          git -C java-cef checkout -q "$SHA"
+          git -C java-cef log -1 --format="java-cef %H %s"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
@@ -138,8 +159,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # java-cef's version script needs a real clone with history (a submodule's .git is only a file)
+      - name: Get java-cef at the pinned commit
+        shell: bash
+        run: |
+          SHA=$(git ls-tree HEAD java-cef | awk '{print $3}')
+          rm -rf java-cef
+          git clone -q --filter=blob:none https://github.com/CCBlueX/java-cef java-cef
+          git -C java-cef checkout -q "$SHA"
+          git -C java-cef log -1 --format="java-cef %H %s"
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -148,13 +176,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          JCEF=$(git -C java-cef rev-parse HEAD)
+          JCEF=$(git ls-tree HEAD java-cef | awk '{print $3}')
           TAG="natives-$JCEF"
           cd dist
           ls -la
           for f in *.tar.gz; do sha256sum "$f" | cut -d' ' -f1 > "$f.sha256"; done
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "Chromium natives $(git -C ../java-cef log -1 --format=%h)" \
+            gh release create "$TAG" --title "Chromium natives ${JCEF:0:12}" \
               --notes "java-cef natives (CEF/Chromium) built from java-cef commit $JCEF for every platform. Downloaded automatically by the mod on first start." \
               --target "$GITHUB_SHA"
           fi
