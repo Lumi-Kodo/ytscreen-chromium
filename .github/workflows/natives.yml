@@ -1,0 +1,162 @@
+name: Build Chromium natives
+
+# Builds the java-cef natives (CEF/Chromium + the JNI library) from the pinned java-cef submodule for every
+# platform and publishes them as a GitHub release "natives-<java-cef commit>". The mod downloads them from there.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'java-cef'
+      - '.github/workflows/natives.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: natives
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: amd64
+            runner: ubuntu-24.04
+          - platform: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build
+        working-directory: java-cef
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential g++ cmake ninja-build openjdk-17-jdk python3 libgtk2.0-dev
+          mkdir jcef_build && cd jcef_build
+          cmake -G "Ninja" -DPROJECT_ARCH=${{ matrix.platform }} -DCMAKE_BUILD_TYPE=Release ..
+          ninja -j4
+          mv native/Release linux_${{ matrix.platform }}
+          strip linux_${{ matrix.platform }}/libcef.so
+          python3 ../../.github/workflows/scripts/generate_hash.py linux_${{ matrix.platform }}
+          mv linux_${{ matrix.platform }}/.hash ./
+          tar -czf linux_${{ matrix.platform }}.tar.gz linux_${{ matrix.platform }} .hash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux_${{ matrix.platform }}
+          path: java-cef/jcef_build/linux_${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  windows:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: amd64
+            runner: windows-2022
+            msvc-arch: x64
+          - platform: arm64
+            runner: windows-11-arm
+            msvc-arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      # the gsutil that fetches clang-format does not run on Python 3.13
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.msvc-arch }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc-arch }}
+      - name: Build
+        working-directory: java-cef
+        run: |
+          mkdir jcef_build && cd jcef_build
+          cmake -G "Ninja" -DPROJECT_ARCH=${{ matrix.platform }} -DCMAKE_BUILD_TYPE=Release ..
+          ninja -j4
+          cd native
+          ren Release windows_${{ matrix.platform }}
+          cd ..
+          move native/windows_${{ matrix.platform }} windows_${{ matrix.platform }}
+          python ../../.github/workflows/scripts/generate_hash.py windows_${{ matrix.platform }}
+          move windows_${{ matrix.platform }}/.hash ./
+          tar -czf windows_${{ matrix.platform }}.tar.gz windows_${{ matrix.platform }} .hash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows_${{ matrix.platform }}
+          path: java-cef/jcef_build/windows_${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: amd64
+            runner: macos-15-intel
+          - platform: arm64
+            runner: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Build
+        working-directory: java-cef
+        run: |
+          brew install ninja coreutils
+          sudo xcode-select -s /Applications/Xcode.app
+          mkdir jcef_build && cd jcef_build
+          cmake -G "Ninja" -DPROJECT_ARCH=${{ matrix.platform }} -DCMAKE_BUILD_TYPE=Release ..
+          ninja -j4
+          mv native/Release macos_${{ matrix.platform }}
+          python3 ../../.github/workflows/scripts/generate_hash.py macos_${{ matrix.platform }}
+          mv macos_${{ matrix.platform }}/.hash ./
+          tar -czf macos_${{ matrix.platform }}.tar.gz macos_${{ matrix.platform }} .hash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos_${{ matrix.platform }}
+          path: java-cef/jcef_build/macos_${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: [linux, windows, macos]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          JCEF=$(git -C java-cef rev-parse HEAD)
+          TAG="natives-$JCEF"
+          cd dist
+          ls -la
+          for f in *.tar.gz; do sha256sum "$f" | cut -d' ' -f1 > "$f.sha256"; done
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Chromium natives $(git -C ../java-cef log -1 --format=%h)" \
+              --notes "java-cef natives (CEF/Chromium) built from java-cef commit $JCEF for every platform. Downloaded automatically by the mod on first start." \
+              --target "$GITHUB_SHA"
+          fi
+          gh release upload "$TAG" *.tar.gz *.sha256 --clobber
+          gh release view "$TAG"
