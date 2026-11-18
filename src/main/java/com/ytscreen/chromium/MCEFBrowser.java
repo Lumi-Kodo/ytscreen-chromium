@@ -63,6 +63,7 @@ public class MCEFBrowser extends CefBrowserOsr {
     private final MCEFDragContext dragContext = new MCEFDragContext();
     private MCEFCursorChangeListener cursorChangeListener;
     private boolean browserControls = true;
+    private boolean popupsInPlace = true;
     private boolean autoDSF;
     private double deviceScaleFactor = 1;
     private boolean closed;
@@ -157,6 +158,16 @@ public class MCEFBrowser extends CefBrowserOsr {
     public MCEFBrowser useBrowserControls(boolean browserControls) {
         this.browserControls = browserControls;
         return this;
+    }
+
+    /** Links that open a new window open in this browser instead (on by default); see {@link MCEFClient}. */
+    public MCEFBrowser setOpenPopupsInPlace(boolean inPlace) {
+        this.popupsInPlace = inPlace;
+        return this;
+    }
+
+    public boolean opensPopupsInPlace() {
+        return popupsInPlace;
     }
 
     public MCEFDragContext getDragContext() {

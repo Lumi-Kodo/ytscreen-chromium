@@ -32,7 +32,6 @@ import org.cef.callback.CefContextMenuParams;
 import org.cef.callback.CefMenuModel;
 import org.cef.handler.CefContextMenuHandler;
 import org.cef.handler.CefDisplayHandler;
-import org.cef.handler.CefLifeSpanHandler;
 import org.cef.handler.CefLoadHandler;
 import org.cef.handler.CefRequestHandler;
 import org.cef.handler.CefResourceRequestHandler;
@@ -47,26 +46,29 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * handler and forwards every event to all handlers that mods registered here (load, display, context menu, request and
  * popup events). Register through this class, never directly on {@link #getHandle()}.
  * <p>
- * Popups ({@code target="_blank"} links, {@code window.open}) would open as separate native windows, which an
- * off-screen browser inside a game cannot show. Unless a registered {@link PopupHandler} handles them, they are opened
- * in the browser that asked for them instead.
+ * Popups ({@code target="_blank"} links, {@code window.open}, middle clicks): the natives cancel every popup of an
+ * off-screen browser, so links that open a new window would do nothing. For {@link MCEFBrowser}s with
+ * {@link MCEFBrowser#setOpenPopupsInPlace(boolean)} (the default) such links open in the same browser instead.
  * <p>
  * Unlike MCEF, no audio handler is registered: Chromium plays the sound itself (MCEF's audio capture gave mono
  * sound and leaked native memory).
  */
-public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDisplayHandler, CefRequestHandler, CefLifeSpanHandler {
-    /** Decides what happens with a popup. Return true if it was handled (the popup is then not opened). */
-    @FunctionalInterface
-    public interface PopupHandler {
-        boolean onPopup(CefBrowser browser, CefFrame frame, String targetUrl);
-    }
+public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDisplayHandler, CefRequestHandler {
+    /**
+     * Run in every page and frame of browsers that open popups in place: new-window links open in the top document and
+     * window.open navigates it.
+     */
+    private static final String POPUPS_IN_PLACE = "(function(){if(window.__mcefPopups)return;window.__mcefPopups=true;"
+            + "window.open=function(u){if(u){try{window.top.location.href=new URL(String(u),location.href).href;}catch(e){}}return null;};"
+            + "document.addEventListener('click',function(e){var a=e.target&&e.target.closest?e.target.closest('a[target]'):null;"
+            + "if(a){var t=(a.getAttribute('target')||'').toLowerCase();if(t&&t!=='_self'&&t!=='_parent'&&t!=='_top')a.setAttribute('target','_top');}},true);"
+            + "})();";
 
     private final CefClient handle;
     private final List<CefLoadHandler> loadHandlers = new CopyOnWriteArrayList<>();
     private final List<CefContextMenuHandler> contextMenuHandlers = new CopyOnWriteArrayList<>();
     private final List<CefDisplayHandler> displayHandlers = new CopyOnWriteArrayList<>();
     private final List<CefRequestHandler> requestHandlers = new CopyOnWriteArrayList<>();
-    private final List<PopupHandler> popupHandlers = new CopyOnWriteArrayList<>();
 
     public MCEFClient(CefClient cefClient) {
         handle = cefClient;
@@ -74,7 +76,6 @@ public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDis
         cefClient.addContextMenuHandler(this);
         cefClient.addDisplayHandler(this);
         cefClient.addRequestHandler(this);
-        cefClient.addLifeSpanHandler(this);
     }
 
     public CefClient getHandle() {
@@ -98,6 +99,7 @@ public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDis
 
     @Override
     public void onLoadStart(CefBrowser browser, CefFrame frame, CefRequest.TransitionType transitionType) {
+        if (frame != null && browser instanceof MCEFBrowser b && b.opensPopupsInPlace()) frame.executeJavaScript(POPUPS_IN_PLACE, frame.getURL(), 0);
         for (CefLoadHandler h : loadHandlers) h.onLoadStart(browser, frame, transitionType);
     }
 
@@ -205,10 +207,16 @@ public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDis
         return cancel;
     }
 
+    /** Middle click / Ctrl+click: a new tab, which an off-screen browser cannot have. Opened in place if allowed. */
     @Override
     public boolean onOpenURLFromTab(CefBrowser browser, CefFrame frame, String targetUrl, boolean userGesture) {
         boolean cancel = false;
         for (CefRequestHandler h : requestHandlers) cancel |= h.onOpenURLFromTab(browser, frame, targetUrl, userGesture);
+        if (!cancel && browser instanceof MCEFBrowser b && b.opensPopupsInPlace() && targetUrl != null
+                && (targetUrl.startsWith("https://") || targetUrl.startsWith("http://"))) {
+            browser.loadURL(targetUrl);
+            return true;
+        }
         return cancel;
     }
 
@@ -239,40 +247,5 @@ public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDis
     @Override
     public void onRenderProcessTerminated(CefBrowser browser, TerminationStatus status, int errorCode, String errorString) {
         for (CefRequestHandler h : requestHandlers) h.onRenderProcessTerminated(browser, status, errorCode, errorString);
-    }
-
-    // ------------------------------------------------------------------ popups and browser life span (UI thread)
-
-    public void addPopupHandler(PopupHandler handler) {
-        popupHandlers.add(handler);
-    }
-
-    public void removePopupHandler(PopupHandler handler) {
-        popupHandlers.remove(handler);
-    }
-
-    @Override
-    public boolean onBeforePopup(CefBrowser browser, CefFrame frame, String targetUrl, String targetFrameName) {
-        for (PopupHandler h : popupHandlers) if (h.onPopup(browser, frame, targetUrl)) return true;
-        // no native popup windows: open the address in the same browser
-        if (browser != null && targetUrl != null && (targetUrl.startsWith("https://") || targetUrl.startsWith("http://"))) browser.loadURL(targetUrl);
-        return true;
-    }
-
-    @Override
-    public void onAfterCreated(CefBrowser browser) {
-    }
-
-    @Override
-    public void onAfterParentChanged(CefBrowser browser) {
-    }
-
-    @Override
-    public boolean doClose(CefBrowser browser) {
-        return browser.doClose(); // CefClient's default when no life span handler is set
-    }
-
-    @Override
-    public void onBeforeClose(CefBrowser browser) {
     }
 }
