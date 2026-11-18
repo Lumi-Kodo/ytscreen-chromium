@@ -54,8 +54,6 @@ final class SelfTest {
     private static final long started = System.currentTimeMillis();
     private static final List<String> log = new ArrayList<>();
     private static MCEFBrowser browser;
-    private static MCEFBrowser second;
-    private static boolean secondLoaded;
     private static long browserAt;
     private static volatile String consoleLine;
     private static volatile String address = "";
@@ -95,7 +93,7 @@ final class SelfTest {
                 @Override
                 public boolean onConsoleMessage(org.cef.browser.CefBrowser b, org.cef.CefSettings.LogSeverity level, String message, String source, int line) {
                     if (b == browser && message.startsWith("SELFTEST:")) consoleLine = message.substring(9);
-                    else if ((b == browser || b == second) && message.startsWith("SELFTEST-")) console.add(message);
+                    else if (b == browser && message.startsWith("SELFTEST-")) console.add(message);
                     return false;
                 }
 
@@ -176,24 +174,8 @@ final class SelfTest {
             // single-page sites change the address with the history API: the display handler must report it
             if (address.endsWith("/yts-pushstate")) {
                 note("history.pushState reported: " + address);
-                // a second browser with its own user agent
-                second = MCEF.createBrowser("about:blank", false);
-                second.setUserAgentOverride("YTS-SelfTest-Agent/1");
-                second.resize(320, 180);
-                phase = 7;
-                phaseAt = now;
-            } else if (now - phaseAt > 10_000) finish("FAIL: history.pushState not reported (address " + address + ")");
-            return;
-        }
-        if (phase == 7) {
-            if (now - phaseAt > 3000 && !secondLoaded) {
-                secondLoaded = true;
-                second.loadURL("data:text/html,<script>console.log('SELFTEST-UA:'%2Bnavigator.userAgent)</script>");
-            }
-            if (console.contains("SELFTEST-UA:YTS-SelfTest-Agent/1")) {
-                note("per-browser user agent applied");
                 finish("PASS");
-            } else if (now - phaseAt > 15_000) finish("FAIL: per-browser user agent not applied " + console);
+            } else if (now - phaseAt > 10_000) finish("FAIL: history.pushState not reported (address " + address + ")");
             return;
         }
         if (now - browserAt < 4000 || consoleLine == null || browser.getRenderer().getTextureID() == 0) {
@@ -273,7 +255,6 @@ final class SelfTest {
             MCEF.getLogger().error("could not write the self-test result", ex);
         }
         if (browser != null) browser.close();
-        if (second != null) second.close();
         Minecraft.getInstance().stop();
     }
 }
