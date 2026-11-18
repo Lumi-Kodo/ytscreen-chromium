@@ -94,12 +94,16 @@ public class MCEFClient implements CefLoadHandler, CefContextMenuHandler, CefDis
 
     @Override
     public void onLoadingStateChange(CefBrowser browser, boolean isLoading, boolean canGoBack, boolean canGoForward) {
+        if (browser instanceof MCEFBrowser b) b.applyUserAgentOverride();
         for (CefLoadHandler h : loadHandlers) h.onLoadingStateChange(browser, isLoading, canGoBack, canGoForward);
     }
 
     @Override
     public void onLoadStart(CefBrowser browser, CefFrame frame, CefRequest.TransitionType transitionType) {
-        if (frame != null && browser instanceof MCEFBrowser b && b.opensPopupsInPlace()) frame.executeJavaScript(POPUPS_IN_PLACE, frame.getURL(), 0);
+        if (browser instanceof MCEFBrowser b) {
+            b.applyUserAgentOverride();
+            if (frame != null && b.opensPopupsInPlace()) frame.executeJavaScript(POPUPS_IN_PLACE, frame.getURL(), 0);
+        }
         for (CefLoadHandler h : loadHandlers) h.onLoadStart(browser, frame, transitionType);
     }
 

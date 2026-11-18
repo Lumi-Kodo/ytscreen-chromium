@@ -160,6 +160,40 @@ public class MCEFBrowser extends CefBrowserOsr {
         return this;
     }
 
+    private volatile String userAgentOverride;
+    private boolean userAgentApplied;
+
+    /**
+     * User agent of this browser only (header and {@code navigator.userAgent}); null = the global one. Applied through
+     * DevTools as soon as the browser exists, so it is in effect from the second page load on (the first page loaded
+     * at creation may still see the global user agent).
+     */
+    public MCEFBrowser setUserAgentOverride(String userAgent) {
+        this.userAgentOverride = userAgent;
+        this.userAgentApplied = false;
+        applyUserAgentOverride();
+        return this;
+    }
+
+    public String getUserAgentOverride() {
+        return userAgentOverride;
+    }
+
+    /** Called by {@link MCEFClient} on load events (the native browser exists by then). */
+    void applyUserAgentOverride() {
+        String ua = userAgentOverride;
+        if (userAgentApplied || ua == null) return;
+        org.cef.browser.CefDevToolsClient devTools = getDevToolsClient();
+        if (devTools == null) return;
+        userAgentApplied = true;
+        com.google.gson.JsonObject params = new com.google.gson.JsonObject();
+        params.addProperty("userAgent", ua);
+        devTools.executeDevToolsMethod("Emulation.setUserAgentOverride", params.toString()).exceptionally(t -> {
+            MCEF.getLogger().warn("Could not set the user agent of a browser", t);
+            return null;
+        });
+    }
+
     /** Links that open a new window open in this browser instead (on by default); see {@link MCEFClient}. */
     public MCEFBrowser setOpenPopupsInPlace(boolean inPlace) {
         this.popupsInPlace = inPlace;
