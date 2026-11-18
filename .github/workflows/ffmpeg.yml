@@ -1,0 +1,57 @@
+name: Publish ffmpeg
+
+# Mirrors LGPL builds of ffmpeg (BtbN/FFmpeg-Builds, release branch 7.1) into this repository's release "ffmpeg-n7.1",
+# so YouTube Screen can download a fixed file with a pinned SHA-256. Only the ffmpeg executable is kept.
+# Source code of ffmpeg: https://ffmpeg.org/download.html (LGPL 2.1+); build scripts: https://github.com/BtbN/FFmpeg-Builds
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ffmpeg.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ffmpeg-n7.1
+    steps:
+      - name: Already published?
+        id: have
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Download and repackage
+        if: steps.have.outputs.yes != 'true'
+        run: |
+          set -e
+          mkdir -p work out && cd work
+          gh release view latest -R BtbN/FFmpeg-Builds --json assets -q '.assets[].name' | grep -E '^ffmpeg-n7\.1-latest-(linux64|linuxarm64|win64|winarm64)-lgpl-7\.1\.(zip|tar\.xz)$' | tee names.txt
+          for p in linux64:linux_amd64 linuxarm64:linux_arm64 win64:windows_amd64 winarm64:windows_arm64; do
+            src=${p%%:*}; dst=${p##*:}
+            name=$(grep -E -- "-${src}-lgpl" names.txt | head -1)
+            [ -n "$name" ] || { echo "missing $src"; exit 1; }
+            gh release download latest -R BtbN/FFmpeg-Builds -p "$name"
+            rm -rf x && mkdir x
+            case "$name" in *.zip) unzip -q "$name" -d x;; *) tar -xf "$name" -C x;; esac
+            exe=$(find x -path '*/bin/ffmpeg' -o -path '*/bin/ffmpeg.exe' | head -1)
+            lic=$(find x -maxdepth 2 -name 'LICENSE*' | head -1)
+            mkdir -p pkg && rm -rf pkg/* && cp "$exe" pkg/ && chmod +x pkg/ffmpeg* || true
+            [ -n "$lic" ] && cp "$lic" pkg/LICENSE.txt
+            printf 'ffmpeg 7.1 (LGPL build by BtbN/FFmpeg-Builds, %s)\nSource: https://ffmpeg.org/download.html\nBuild scripts: https://github.com/BtbN/FFmpeg-Builds\n' "$name" > pkg/README.txt
+            tar -czf "../out/ffmpeg-${dst}.tar.gz" -C pkg .
+            sha256sum "../out/ffmpeg-${dst}.tar.gz" | cut -d' ' -f1 > "../out/ffmpeg-${dst}.tar.gz.sha256"
+            if [ "$dst" = linux_amd64 ]; then
+              pkg/ffmpeg -hide_banner -version | head -1
+              pkg/ffmpeg -hide_banner -encoders | grep -E 'libvpx|libopus'
+              pkg/ffmpeg -hide_banner -decoders | grep -E ' h264 | aac '
+            fi
+          done
+          ls -la ../out
+      - name: Publish
+        if: steps.have.outputs.yes != 'true'
+        run: |
+          gh release create "$TAG" out/* -R "$GITHUB_REPOSITORY" --title "ffmpeg 7.1 (LGPL) for YouTube Screen" \
+            --notes "LGPL builds of ffmpeg 7.1 from BtbN/FFmpeg-Builds (only the ffmpeg executable). YouTube Screen downloads them to play H.264 videos, which the bundled Chromium cannot decode. ffmpeg source: https://ffmpeg.org/download.html"
