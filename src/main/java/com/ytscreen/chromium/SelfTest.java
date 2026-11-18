@@ -40,7 +40,8 @@ import java.util.List;
 
 /**
  * Automated check used by CI (-Dytscreen.chromium.selftest=true): installs the natives, starts Chromium, renders a
- * page with JavaScript, checks the console bridge and the texture, writes chromium-selftest.txt/png and exits.
+ * page with JavaScript, checks the console bridge and the texture, mouse and keyboard input, the editing shortcuts,
+ * popups (opened in the same browser) and address reports, writes chromium-selftest.txt/png and exits.
  */
 final class SelfTest {
     private static final long TIMEOUT_MS = 300_000;
@@ -48,12 +49,14 @@ final class SelfTest {
             + java.net.URLEncoder.encode("<html><body style='margin:0;background:#c00'>"
             + "<div id=d style='position:absolute;left:0;top:0;width:50%;height:100%;background:#0c0' onclick=\"console.log('SELFTEST-CLICK')\"></div>"
             + "<input id=i style='position:absolute;left:60%;top:10px;width:200px;height:30px' oninput=\"console.log('SELFTEST-INPUT:'+this.value)\">"
+            + "<a id=l target=_blank href='https://example.org/' style='position:absolute;left:60%;top:220px;width:200px;height:60px;display:block;background:#00c'>popup</a>"
             + "<script>console.log('SELFTEST:' + navigator.userAgent);</script></body></html>", StandardCharsets.UTF_8).replace("+", "%20");
     private static final long started = System.currentTimeMillis();
     private static final List<String> log = new ArrayList<>();
     private static MCEFBrowser browser;
     private static long browserAt;
     private static volatile String consoleLine;
+    private static volatile String address = "";
     private static final java.util.Set<String> console = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static boolean done;
     private static int phase;
@@ -93,6 +96,11 @@ final class SelfTest {
                     else if (b == browser && message.startsWith("SELFTEST-")) console.add(message);
                     return false;
                 }
+
+                @Override
+                public void onAddressChange(org.cef.browser.CefBrowser b, org.cef.browser.CefFrame frame, String url) {
+                    if (b == browser && (frame == null || frame.isMain())) address = url;
+                }
             });
             browser = MCEF.createBrowser(PAGE, false);
             browser.resize(640, 360);
@@ -114,19 +122,60 @@ final class SelfTest {
         if (phase == 2) {
             if (now - phaseAt < 800) return;
             if (now - phaseAt < 1000) {
-                for (char ch : new char[]{'a', 'b'}) {
-                    int key = org.lwjgl.glfw.GLFW.GLFW_KEY_A + (ch - 'a');
-                    browser.sendKeyPress(key, 0, 0);
-                    browser.sendKeyTyped(ch, 0);
-                    browser.sendKeyRelease(key, 0, 0);
-                }
+                type("ab");
                 phaseAt -= 200; // type once
                 return;
             }
             if (console.contains("SELFTEST-INPUT:ab")) {
                 note("keyboard input reached the page");
-                finish("PASS");
+                // Ctrl+A (editing command through the frame, independent of the keyboard layout), then type over it
+                key(org.lwjgl.glfw.GLFW.GLFW_KEY_A, org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL);
+                type("c");
+                phase = 3;
+                phaseAt = now;
             } else if (now - phaseAt > 8000) finish("FAIL: typed text does not reach the page " + console);
+            return;
+        }
+        if (phase == 3) {
+            if (console.contains("SELFTEST-INPUT:c")) {
+                note("Ctrl+A selected the text");
+                key(org.lwjgl.glfw.GLFW.GLFW_KEY_A, org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL);
+                key(org.lwjgl.glfw.GLFW.GLFW_KEY_C, org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL);
+                key(org.lwjgl.glfw.GLFW.GLFW_KEY_RIGHT, 0);
+                key(org.lwjgl.glfw.GLFW.GLFW_KEY_V, org.lwjgl.glfw.GLFW.GLFW_MOD_CONTROL);
+                phase = 4;
+                phaseAt = now;
+            } else if (now - phaseAt > 8000) finish("FAIL: Ctrl+A did not select the text " + console);
+            return;
+        }
+        if (phase == 4) {
+            boolean pasted = console.contains("SELFTEST-INPUT:cc");
+            if (!pasted && now - phaseAt < 5000) return;
+            // the clipboard depends on the desktop (none on a bare virtual display): reported, not required
+            note(pasted ? "Ctrl+C / Ctrl+V copied and pasted" : "clipboard not available here (Ctrl+C / Ctrl+V not checked)");
+            browser.sendMouseMove(480, 250);
+            browser.sendMousePress(480, 250, 0);
+            browser.sendMouseRelease(480, 250, 0);
+            phase = 5;
+            phaseAt = now;
+            return;
+        }
+        if (phase == 5) {
+            // target=_blank must open in the same browser, not as a native window
+            if (address.startsWith("https://example.org")) {
+                note("link with target=_blank opened in the same browser: " + address);
+                browser.executeJavaScript("history.pushState({}, '', '/yts-pushstate')", address, 0);
+                phase = 6;
+                phaseAt = now;
+            } else if (now - phaseAt > 20_000) finish("FAIL: popup link did not open in the browser (address " + address + ")");
+            return;
+        }
+        if (phase == 6) {
+            // single-page sites change the address with the history API: the display handler must report it
+            if (address.endsWith("/yts-pushstate")) {
+                note("history.pushState reported: " + address);
+                finish("PASS");
+            } else if (now - phaseAt > 10_000) finish("FAIL: history.pushState not reported (address " + address + ")");
             return;
         }
         if (now - browserAt < 4000 || consoleLine == null || browser.getRenderer().getTextureID() == 0) {
@@ -176,6 +225,20 @@ final class SelfTest {
         browser.sendMouseRelease(160, 180, 0);
         phase = 1;
         phaseAt = now;
+    }
+
+    private static void type(String text) {
+        for (char ch : text.toCharArray()) {
+            int key = org.lwjgl.glfw.GLFW.GLFW_KEY_A + (ch - 'a');
+            browser.sendKeyPress(key, 0, 0);
+            browser.sendKeyTyped(ch, 0);
+            browser.sendKeyRelease(key, 0, 0);
+        }
+    }
+
+    private static void key(int key, int mods) {
+        browser.sendKeyPress(key, 0, mods);
+        browser.sendKeyRelease(key, 0, mods);
     }
 
     private static void finish(String result) {

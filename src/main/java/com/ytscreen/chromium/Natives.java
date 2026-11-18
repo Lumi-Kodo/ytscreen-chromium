@@ -169,8 +169,9 @@ public final class Natives {
                 return;
             }
 
+            String repo = resource("natives.repo");
             String url = MCEF.getSettings().getDownloadUrl()
-                    .replace("${repo}", "Lumi-Kodo/ytscreen-chromium")
+                    .replace("${repo}", repo == null || repo.isBlank() ? "Lumi-Kodo/ytscreen-chromium" : repo.trim())
                     .replace("${commit}", commit)
                     .replace("${platform}", name);
             Files.createDirectories(nativesRoot);

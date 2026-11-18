@@ -59,7 +59,7 @@ def jcefCommit = providers.exec {
 def platforms = ['linux_amd64', 'linux_arm64', 'windows_amd64', 'windows_arm64', 'macos_amd64', 'macos_arm64']
 
 /**
- * Writes jcef.commit and natives.sha256 (platform=sha256 of the natives archive) into the jar. The checksums are
+ * Writes jcef.commit, natives.repo and natives.sha256 (platform=sha256 of the natives archive) into the jar. The checksums are
  * taken from the release built by the natives workflow; the mod only accepts archives that match them.
  * -PskipNativeChecksums builds without them (development only: the mod then refuses to download).
  */
@@ -76,6 +76,7 @@ def generateJcefInfo = tasks.register('generateJcefInfo') {
         dir.mkdirs()
         def commit = jcefCommit.get()
         new File(dir, 'jcef.commit').text = commit + '\n'
+        new File(dir, 'natives.repo').text = repo + '\n'
         def lines = []
         if (!skip) {
             platforms.each { p ->

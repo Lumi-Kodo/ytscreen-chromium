@@ -98,7 +98,7 @@ public class MCEFDragContext {
     }
 
     public void stopDragging() {
-        dragData.dispose();
+        if (dragData != null) dragData.dispose();
         dragData = null;
         dragMask = 0;
         cursorOverride = -1;

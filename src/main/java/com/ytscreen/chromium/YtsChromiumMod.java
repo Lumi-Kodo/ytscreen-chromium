@@ -36,10 +36,6 @@ import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.GameShuttingDownEvent;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-
 /**
  * Client entry point: downloads the natives in the background, starts Chromium on the render thread when they are
  * ready, pumps Chromium's message loop every frame and shows the download progress on menu screens.
@@ -108,18 +104,23 @@ public final class YtsChromiumMod {
 
     private static void onShutdown(GameShuttingDownEvent e) {
         MCEF.shutdown();
-        // Windows: helper processes sometimes linger after the game closes
-        if (MCEFPlatform.getPlatform().isWindows()) {
-            try {
-                Process p = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq jcef_helper.exe", "/NH").start();
-                boolean running;
-                try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-                    running = r.lines().anyMatch(l -> l.toLowerCase().contains("jcef_helper.exe"));
+        // Chromium's helper processes sometimes outlive the game (seen on Windows). Only this game's own child
+        // processes are touched, never the Chromium of another program or another Minecraft instance.
+        try {
+            java.util.List<ProcessHandle> helpers = ProcessHandle.current().descendants()
+                    .filter(p -> p.info().command().map(c -> c.toLowerCase(java.util.Locale.ROOT).contains("jcef")).orElse(false))
+                    .toList();
+            long deadline = System.currentTimeMillis() + 2000;
+            for (ProcessHandle p : helpers) {
+                long wait = deadline - System.currentTimeMillis();
+                try {
+                    if (wait > 0) p.onExit().get(wait, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (Exception ignored) {
                 }
-                if (running) new ProcessBuilder("taskkill", "/F", "/IM", "jcef_helper.exe").start();
-            } catch (Exception ex) {
-                MCEF.getLogger().debug("Could not check for lingering Chromium processes", ex);
+                if (p.isAlive()) p.destroyForcibly();
             }
+        } catch (Exception ex) {
+            MCEF.getLogger().debug("Could not check for lingering Chromium processes", ex);
         }
     }
 }
