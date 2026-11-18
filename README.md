@@ -21,13 +21,18 @@ Supported: Windows 10/11 (x64, ARM64), Linux (x64, ARM64), macOS 10.15+ (Intel; 
   (`natives.sha256`); the mod only installs an archive whose checksum matches, then checks every unpacked file against the
   archive's own file list. Archives cannot write outside their folder.
 - **Test.** The same workflow starts a real Minecraft client on a virtual display, lets the mod download and start Chromium,
-  renders a test page and checks the picture and JavaScript.
+  renders a test page and checks the picture, JavaScript, mouse clicks, typing, Ctrl+A / Ctrl+C / Ctrl+V, links that open a
+  new window and address reports of `history.pushState`.
 - **API.** Same shape as MCEF (`MCEF`, `MCEFBrowser`, `MCEFClient`, `MCEFApp`) in the package `com.ytscreen.chromium`, so it can be
   installed next to the original MCEF.
 
 Differences from MCEF: Chromium 152 instead of 116; downloads from this repository's releases with checksums pinned in the
 jar; no audio capture handler (Chromium plays sound itself); no `--disable-web-security`; `--no-first-run` (Chromium 152 asks
-for a EULA on Linux); `root_cache_path` set as CEF 120+ requires; no mixins (NeoForge events only).
+for a EULA on Linux); `root_cache_path` set as CEF 120+ requires; no mixins (NeoForge events only). The natives expect SDL
+input codes, Minecraft 1.21.1 gives GLFW codes: `SdlInput` converts them. `MCEFClient` forwards load, display, context menu
+and request events to every registered handler (several mods can share Chromium). Links that open a new window open in the
+same browser (the natives cancel popups of off-screen browsers). Editing shortcuts (select all, copy, cut, paste, undo,
+redo) go through the frame, so they work with any keyboard layout.
 
 Files: `<game>/ytscreen-chromium/` (natives, cache with cookies, `chromium.log`) and `config/ytscreen-chromium.properties`
 (download address, user agent, extra Chromium switches).

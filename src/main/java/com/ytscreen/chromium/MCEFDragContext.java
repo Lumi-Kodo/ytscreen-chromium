@@ -77,7 +77,7 @@ public class MCEFDragContext {
     /**
      * Gets the allowed operation mask for this drag event
      *
-     * @return -1 for any, 0 for none, 1 for copy (TODO: others)
+     * @return CEF drag operation bits: 0 none, 1 copy, 2 link, 4 generic, 8 private, 16 move, 32 delete, -1 any
      */
     public int getMask() {
         return dragMask;
@@ -109,21 +109,14 @@ public class MCEFDragContext {
 
         int currentOverride = cursorOverride;
 
-        switch (operation) {
-            case 0:
-                cursorOverride = CefCursorType.NO_DROP.ordinal();
-                break;
-            case 1:
-                cursorOverride = CefCursorType.COPY.ordinal();
-                break;
-            // TODO: this is a guess, based off https://magpcss.org/ceforum/apidocs3/projects/(default)/cef_drag_operations_mask_t.html
-            // not sure if it's correct
-            case 16:
-                cursorOverride = CefCursorType.MOVE.ordinal();
-                break;
-            default: // TODO: I'm not sure of the numbers for these
-                cursorOverride = -1;
-        }
+        // cef_drag_operations_mask_t: NONE 0, COPY 1, LINK 2, GENERIC 4, PRIVATE 8, MOVE 16, DELETE 32
+        cursorOverride = switch (operation) {
+            case 0 -> CefCursorType.NO_DROP.ordinal();
+            case 1 -> CefCursorType.COPY.ordinal();
+            case 2 -> CefCursorType.ALIAS.ordinal();
+            case 4, 8, 16 -> CefCursorType.MOVE.ordinal();
+            default -> -1;
+        };
 
         return currentOverride != cursorOverride && cursorOverride != -1;
     }
