@@ -79,6 +79,10 @@ final class CefUtil {
         // Chromium 152+ asks Linux users to accept a EULA on the first run; there is no window to accept it in, so
         // the browser process would exit with code 28 (EULA refused)
         switches.add("--no-first-run");
+        // lighter pages: sites that support it drop their animations; no smooth scrolling animation
+        switches.add("--force-prefers-reduced-motion");
+        switches.add("--disable-smooth-scrolling");
+        if (!settings.getProxyServer().isEmpty()) switches.add("--proxy-server=" + settings.getProxyServer());
         if (platform.isLinux()) {
             // Chromium draws through ANGLE on GL and runs on X11 (XWayland on Wayland sessions)
             switches.add("--use-angle=gl");
@@ -119,12 +123,9 @@ final class CefUtil {
         cefSettings.background_color = cefSettings.new ColorType(0, 255, 255, 255);
         cefSettings.log_file = cacheDir.getParent().resolve("chromium.log").toAbsolutePath().toString();
         cefSettings.log_severity = verbose ? CefSettings.LogSeverity.LOGSEVERITY_VERBOSE : CefSettings.LogSeverity.LOGSEVERITY_WARNING;
-        if (!settings.getUserAgent().isEmpty()) {
-            cefSettings.user_agent = settings.getUserAgent();
-        } else {
-            // Work around for Google sign-in "This browser or app may not be secure."
-            cefSettings.user_agent_product = "MCEF/2";
-        }
+        // Empty: Chromium's own user agent ("... Chrome/152.0.0.0 Safari/537.36"). MCEF replaced the Chrome token with
+        // "MCEF/2"; sites then took the browser for an unknown or outdated one and served slow fallback pages or broke.
+        if (!settings.getUserAgent().isEmpty()) cefSettings.user_agent = settings.getUserAgent();
 
         cefAppInstance = CefApp.getInstance(cefSwitches, cefSettings);
         cefClientInstance = cefAppInstance.createClient();

@@ -50,7 +50,7 @@ final class SelfTest {
             + "<div id=d style='position:absolute;left:0;top:0;width:50%;height:100%;background:#0c0' onclick=\"console.log('SELFTEST-CLICK')\"></div>"
             + "<input id=i style='position:absolute;left:60%;top:10px;width:200px;height:30px' oninput=\"console.log('SELFTEST-INPUT:'+this.value)\">"
             + "<a id=l target=_blank href='https://example.org/' style='position:absolute;left:60%;top:220px;width:200px;height:60px;display:block;background:#00c'>popup</a>"
-            + "<script>console.log('SELFTEST:' + navigator.userAgent);</script></body></html>", StandardCharsets.UTF_8).replace("+", "%20");
+            + "<script>console.log('SELFTEST:' + navigator.userAgent + ' reduced-motion=' + matchMedia('(prefers-reduced-motion: reduce)').matches);</script></body></html>", StandardCharsets.UTF_8).replace("+", "%20");
     private static final long started = System.currentTimeMillis();
     private static final List<String> log = new ArrayList<>();
     private static MCEFBrowser browser;
@@ -183,6 +183,11 @@ final class SelfTest {
             return;
         }
         note("user agent: " + consoleLine);
+        // sites must see a normal Chrome (an unknown browser gets fallback pages) and the reduced-motion preference
+        if (!consoleLine.contains("Chrome/") || !consoleLine.endsWith("reduced-motion=true")) {
+            finish("FAIL: unexpected user agent or motion preference");
+            return;
+        }
         // left half green, right half red
         int tex = browser.getRenderer().getTextureID();
         int w = 640, h = 360;

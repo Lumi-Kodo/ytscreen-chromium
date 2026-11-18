@@ -42,6 +42,7 @@ public final class MCEFSettings {
 
     private String downloadUrl = DEFAULT_DOWNLOAD_URL;
     private String userAgent = "";
+    private String proxyServer = "";
     private final List<String> extraSwitches = new ArrayList<>();
     private boolean useCache = true;
 
@@ -65,25 +66,34 @@ public final class MCEFSettings {
         downloadUrl = p.getProperty("downloadUrl", DEFAULT_DOWNLOAD_URL).trim();
         if (downloadUrl.isEmpty()) downloadUrl = DEFAULT_DOWNLOAD_URL;
         userAgent = p.getProperty("userAgent", "").trim();
+        proxyServer = p.getProperty("proxyServer", "").trim();
+        if (!proxyServer.matches("[A-Za-z0-9.:;=_/\\[\\]-]*")) {
+            MCEF.getLogger().warn("Ignoring invalid proxyServer setting: {}", proxyServer);
+            proxyServer = "";
+        }
         useCache = !"false".equalsIgnoreCase(p.getProperty("useCache", "true").trim());
         extraSwitches.clear();
         for (String s : p.getProperty("extraSwitches", "").trim().split("\\s+")) {
             if (s.startsWith("--")) extraSwitches.add(s);
         }
-        if (!Files.isRegularFile(f)) save();
+        // first start, or a file from an older version without all settings: write the complete file
+        if (!p.keySet().containsAll(java.util.List.of("downloadUrl", "userAgent", "proxyServer", "useCache", "extraSwitches"))) save();
     }
 
     private void save() {
         Properties p = new Properties();
         p.setProperty("downloadUrl", downloadUrl);
         p.setProperty("userAgent", userAgent);
+        p.setProperty("proxyServer", proxyServer);
         p.setProperty("useCache", String.valueOf(useCache));
         p.setProperty("extraSwitches", String.join(" ", extraSwitches));
         try {
             Files.createDirectories(file().getParent());
             try (OutputStream out = Files.newOutputStream(file())) {
                 p.store(out, "YouTube Screen Chromium. downloadUrl: where the Chromium natives come from (${repo}, ${commit}, ${platform}); "
-                        + "userAgent: empty = Chromium's own; extraSwitches: additional Chromium command line switches separated by spaces");
+                        + "userAgent: empty = Chromium's own; proxyServer: empty = the system's proxy settings, otherwise e.g. "
+                        + "socks5://127.0.0.1:1080 or http://host:port (restart the game after changing); "
+                        + "extraSwitches: additional Chromium command line switches separated by spaces");
             }
         } catch (IOException e) {
             MCEF.getLogger().warn("Could not write {}", file(), e);
@@ -98,6 +108,11 @@ public final class MCEFSettings {
     /** Custom user agent, or empty for Chromium's own. */
     public String getUserAgent() {
         return userAgent;
+    }
+
+    /** Proxy for all Chromium traffic, empty = the operating system's proxy settings. */
+    public String getProxyServer() {
+        return proxyServer;
     }
 
     public List<String> getExtraSwitches() {
